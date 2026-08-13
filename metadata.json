@@ -1,0 +1,6 @@
+{
+  "name": "fly2.0",
+  "description": "fly2.0 - Quantum Neural AI Assistant with real-time interactive core matrix and intelligent capabilities",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
