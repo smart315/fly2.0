@@ -18,7 +18,9 @@ export default function App() {
       id: 'welcome_1',
       role: 'assistant',
       content:
-        '안녕하세요! 저는 **fly2.0**입니다. 황금빛 플라즈마 코어와 전자기 신경 망상체로 이루어진 양자 AI 비서입니다. 무엇을 도와드릴까요?',
+        '안녕하십니까, 보스. **fly2.0 (JARVIS 프로토콜)** 시스템이 온라인 상태입니다. 자막은 한국어로 표시되며, 음성은 자비스 영어 음성으로 출력됩니다. 무엇을 지원해 드릴까요, Sir?',
+      voiceText:
+        'Good day, sir. JARVIS protocols are fully active. All telemetry systems are nominal. How may I assist you today, sir?',
       timestamp: new Date().toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
@@ -30,6 +32,7 @@ export default function App() {
   const [mode, setMode] = useState<AssistantMode>('balanced');
   const [visualMode, setVisualMode] = useState<CoreVisualMode>('canvas3d');
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [voiceName, setVoiceName] = useState<string>('Puck'); // Default JARVIS male voice
   const [playingMsgId, setPlayingMsgId] = useState<string | null>(null);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
@@ -63,7 +66,97 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Send message to fly2.0
+  // Synchronous Text & English Voice reveal streamer
+  const streamMessageAndVoice = async (
+    msgId: string,
+    fullKoreanText: string,
+    englishVoiceText: string,
+    timestamp: string
+  ) => {
+    // Insert initial empty message with English voice reference
+    const initialMsg: Message = {
+      id: msgId,
+      role: 'assistant',
+      content: '',
+      voiceText: englishVoiceText,
+      timestamp,
+    };
+    setMessages((prev) => [...prev, initialMsg]);
+
+    let audioToPlay: HTMLAudioElement | null = null;
+    let useFallbackTTS = false;
+
+    // Fetch English TTS audio before starting text stream if TTS is enabled
+    if (ttsEnabled) {
+      setPlayingMsgId(msgId);
+      setTelemetry((prev) => ({ ...prev, status: 'speaking' }));
+
+      try {
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: fullKoreanText,
+            voiceText: englishVoiceText,
+            voiceName,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.audio) {
+          const audioSrc = `data:audio/wav;base64,${data.audio}`;
+          audioToPlay = new Audio(audioSrc);
+          currentAudioRef.current = audioToPlay;
+
+          audioToPlay.onended = () => {
+            setPlayingMsgId(null);
+            setTelemetry((prev) => ({ ...prev, status: 'idle' }));
+          };
+        } else {
+          useFallbackTTS = true;
+        }
+      } catch (err) {
+        console.warn('TTS request error, using fallback browser voice:', err);
+        useFallbackTTS = true;
+      }
+    }
+
+    // Play English Voice audio while Korean subtitles begin streaming simultaneously
+    if (audioToPlay) {
+      audioToPlay.play().catch(() => {
+        fallbackBrowserTTS(fullKoreanText, msgId, englishVoiceText);
+      });
+    } else if (ttsEnabled && useFallbackTTS) {
+      fallbackBrowserTTS(fullKoreanText, msgId, englishVoiceText);
+    } else {
+      setTelemetry((prev) => ({ ...prev, status: 'idle' }));
+    }
+
+    // Typewriter Korean Subtitles Stream (synchronized with audio output)
+    const totalChars = fullKoreanText.length;
+    let currentCharIndex = 0;
+    const chunkSize = Math.max(1, Math.ceil(totalChars / 90));
+    const intervalMs = Math.max(15, Math.min(30, Math.floor(3200 / (totalChars / chunkSize))));
+
+    const interval = setInterval(() => {
+      currentCharIndex += chunkSize;
+      if (currentCharIndex >= totalChars) {
+        currentCharIndex = totalChars;
+        clearInterval(interval);
+      }
+
+      const revealedText = fullKoreanText.slice(0, currentCharIndex);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, content: revealedText, voiceText: englishVoiceText }
+            : m
+        )
+      );
+    }, intervalMs);
+  };
+
+  // Send message to fly2.0 (JARVIS Protocol)
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isLoading) return;
 
@@ -98,32 +191,32 @@ export default function App() {
       const data = await response.json();
       const replyText =
         data.reply ||
-        'fly2.0 코어 수신 오류: 양자 신경망 데이터를 재구성하는 중입니다.';
+        'Sir, fly2.0 코어 신호 재구성이 필요합니다. 요청을 다시 확인해 주시겠습니까?';
+      const englishVoiceText =
+        data.voiceText ||
+        'Quantum core data synchronized and ready for command, sir.';
 
-      const assistantMsg: Message = {
-        id: `fly2_${Date.now()}`,
-        role: 'assistant',
-        content: replyText,
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      };
+      const assistantMsgId = `fly2_${Date.now()}`;
+      const timestamp = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
 
-      setMessages((prev) => [...prev, assistantMsg]);
-      setTelemetry((prev) => ({ ...prev, status: 'idle' }));
-
-      // Auto TTS if enabled
-      if (ttsEnabled) {
-        handlePlayAudio(replyText, assistantMsg.id);
-      }
+      // Simultaneously trigger Korean subtitle stream and English JARVIS voice
+      await streamMessageAndVoice(
+        assistantMsgId,
+        replyText,
+        englishVoiceText,
+        timestamp
+      );
     } catch (error) {
       console.error('Chat error:', error);
       const errorMsg: Message = {
         id: `err_${Date.now()}`,
         role: 'assistant',
         content:
-          'fly2.0 신경망 서버와의 연결에 문제가 발생했습니다. 백엔드 서비스 상태를 확인해주세요.',
+          'Sir, fly2.0 서버 네트워크 통신에 오류가 발생했습니다. 시스템 연결을 확인해 주십시오.',
+        voiceText: 'Communication telemetry failure. Reconnecting now, sir.',
         timestamp: new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -136,8 +229,12 @@ export default function App() {
     }
   };
 
-  // Play audio TTS
-  const handlePlayAudio = async (text: string, msgId: string) => {
+  // Play audio TTS in English JARVIS voice
+  const handlePlayAudio = async (
+    text: string,
+    msgId: string,
+    voiceText?: string
+  ) => {
     if (playingMsgId === msgId) {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
@@ -153,12 +250,16 @@ export default function App() {
     setPlayingMsgId(msgId);
     setTelemetry((prev) => ({ ...prev, status: 'speaking' }));
 
-    // Try server-side TTS first
+    // Try server-side TTS first with English JARVIS voice
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text,
+          voiceText,
+          voiceName,
+        }),
       });
 
       const data = await res.json();
@@ -173,11 +274,11 @@ export default function App() {
         };
 
         audio.onerror = () => {
-          fallbackBrowserTTS(text, msgId);
+          fallbackBrowserTTS(text, msgId, voiceText);
         };
 
         audio.play().catch(() => {
-          fallbackBrowserTTS(text, msgId);
+          fallbackBrowserTTS(text, msgId, voiceText);
         });
         return;
       }
@@ -186,10 +287,14 @@ export default function App() {
     }
 
     // Fallback Web Speech Synthesis
-    fallbackBrowserTTS(text, msgId);
+    fallbackBrowserTTS(text, msgId, voiceText);
   };
 
-  const fallbackBrowserTTS = (text: string, msgId: string) => {
+  const fallbackBrowserTTS = (
+    text: string,
+    msgId: string,
+    voiceText?: string
+  ) => {
     if (!window.speechSynthesis) {
       setPlayingMsgId(null);
       setTelemetry((prev) => ({ ...prev, status: 'idle' }));
@@ -197,10 +302,28 @@ export default function App() {
     }
 
     window.speechSynthesis.cancel();
-    const cleanText = text.replace(/[`*#_~]/g, '');
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'ko-KR';
-    utterance.rate = 1.05;
+    const textToSpeak = (voiceText || text).replace(/[`*#_~]/g, '');
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.lang = 'en-GB';
+    utterance.rate = 1.0;
+    utterance.pitch = 0.85; // Refined JARVIS tone
+
+    // Pick British or English masculine voice
+    const voices = window.speechSynthesis.getVoices();
+    const britishMaleVoice = voices.find(
+      (v) =>
+        v.lang.startsWith('en') &&
+        (v.name.toLowerCase().includes('british') ||
+          v.name.toLowerCase().includes('uk') ||
+          v.name.toLowerCase().includes('daniel') ||
+          v.name.toLowerCase().includes('george') ||
+          v.name.toLowerCase().includes('oliver') ||
+          v.name.toLowerCase().includes('male') ||
+          v.name.toLowerCase().includes('david'))
+    );
+    if (britishMaleVoice) {
+      utterance.voice = britishMaleVoice;
+    }
 
     utterance.onend = () => {
       setPlayingMsgId(null);
@@ -224,7 +347,9 @@ export default function App() {
         id: 'welcome_reset',
         role: 'assistant',
         content:
-          'fly2.0 신경망 세션이 초기화되었습니다. 새로운 질문이나 작업을 시작해보세요!',
+          'fly2.0 신경망 세션이 초기화되었습니다. 새로운 질문이나 작업을 시작해보세요, Sir!',
+        voiceText:
+          'Neural matrix session reset. Ready for your instructions, sir.',
         timestamp: new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -245,6 +370,8 @@ export default function App() {
         setVisualMode={setVisualMode}
         ttsEnabled={ttsEnabled}
         setTtsEnabled={setTtsEnabled}
+        voiceName={voiceName}
+        setVoiceName={setVoiceName}
         onResetChat={handleResetChat}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
       />
@@ -312,6 +439,12 @@ export default function App() {
             onPlayAudio={handlePlayAudio}
             playingMsgId={playingMsgId}
             status={telemetry.status}
+            onListeningChange={(isListening) => {
+              setTelemetry((prev) => ({
+                ...prev,
+                status: isListening ? 'listening' : 'idle',
+              }));
+            }}
           />
         </div>
       </main>

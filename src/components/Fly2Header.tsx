@@ -20,6 +20,8 @@ interface Fly2HeaderProps {
   setVisualMode: (mode: CoreVisualMode) => void;
   ttsEnabled: boolean;
   setTtsEnabled: (enabled: boolean) => void;
+  voiceName: string;
+  setVoiceName: (voice: string) => void;
   onResetChat: () => void;
   onOpenDiagnostics: () => void;
 }
@@ -32,6 +34,8 @@ export const Fly2Header: React.FC<Fly2HeaderProps> = ({
   setVisualMode,
   ttsEnabled,
   setTtsEnabled,
+  voiceName,
+  setVoiceName,
   onResetChat,
   onOpenDiagnostics,
 }) => {
@@ -168,6 +172,18 @@ export const Fly2Header: React.FC<Fly2HeaderProps> = ({
           <Eye className="w-3.5 h-3.5 text-cyan-400" />
           <span className="capitalize">{visualMode}</span>
         </button>
+
+        {/* JARVIS Voice Selector */}
+        <select
+          value={voiceName}
+          onChange={(e) => setVoiceName(e.target.value)}
+          className="bg-slate-900 border border-slate-800 hover:border-amber-500/50 text-xs text-amber-300 font-mono px-2 py-1.5 rounded-lg focus:outline-none focus:border-amber-400 cursor-pointer transition"
+          title="Select JARVIS AI Voice"
+        >
+          <option value="Puck">🎙️ JARVIS (Puck)</option>
+          <option value="Charon">🎙️ JARVIS Deep (Charon)</option>
+          <option value="Fenrir">🎙️ JARVIS Clear (Fenrir)</option>
+        </select>
 
         {/* Voice/TTS Toggle */}
         <button

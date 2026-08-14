@@ -8,10 +8,10 @@ import {
   Copy,
   Check,
   Sparkles,
-  Bot,
   User,
-  Square,
   RefreshCw,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { Message, PresetPrompt } from '../types';
 import { presetPrompts } from '../data/presetPrompts';
@@ -20,9 +20,10 @@ interface Fly2ChatProps {
   messages: Message[];
   onSendMessage: (text: string) => void;
   isLoading: boolean;
-  onPlayAudio: (text: string, msgId: string) => void;
+  onPlayAudio: (text: string, msgId: string, voiceText?: string) => void;
   playingMsgId: string | null;
   status: 'idle' | 'thinking' | 'speaking' | 'listening';
+  onListeningChange?: (isListening: boolean) => void;
 }
 
 export const Fly2Chat: React.FC<Fly2ChatProps> = ({
@@ -32,10 +33,12 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
   onPlayAudio,
   playingMsgId,
   status,
+  onListeningChange,
 }) => {
   const [inputText, setInputText] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
 
@@ -48,13 +51,32 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
     scrollToBottom();
   }, [messages, isLoading]);
 
-  // Handle Speech Recognition setup
-  const toggleSpeechRecognition = () => {
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
+
+  // Handle Speech Recognition setup with robust permission handling
+  const toggleSpeechRecognition = async () => {
+    setMicNotice(null);
+
     if (isListening) {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
       }
       setIsListening(false);
+      onListeningChange?.(false);
       return;
     }
 
@@ -62,18 +84,39 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert('Your browser does not support speech recognition.');
+      setMicNotice(
+        '현재 브라우저 환경에서는 음성 인식을 지원하지 않습니다. 텍스트 입력을 사용해 주세요.'
+      );
       return;
+    }
+
+    // Proactively request media device audio permission if supported
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Release tracks immediately, recognition will capture audio
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (err: any) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setMicNotice(
+            '마이크 접근 권한이 차단되어 있습니다. 브라우저 주소창의 마이크 아이콘을 눌러 권한을 허용해 주시거나 텍스트로 질문해 주세요.'
+          );
+          setIsListening(false);
+          onListeningChange?.(false);
+          return;
+        }
+      }
     }
 
     try {
       const recognition = new SpeechRecognition();
-      recognition.lang = 'ko-KR'; // Default Korean, auto handles English too
+      recognition.lang = 'ko-KR';
       recognition.continuous = false;
       recognition.interimResults = true;
 
       recognition.onstart = () => {
         setIsListening(true);
+        onListeningChange?.(true);
       };
 
       recognition.onresult = (event: any) => {
@@ -84,19 +127,31 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
       };
 
       recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
         setIsListening(false);
+        onListeningChange?.(false);
+
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setMicNotice(
+            '마이크 권한이 허용되지 않았습니다. 브라우저 권한을 허용하거나 새 탭에서 열어 시도해 주세요.'
+          );
+        } else if (event.error === 'no-speech') {
+          // Silent timeout when user didn't speak
+        } else if (event.error !== 'aborted') {
+          setMicNotice('음성 인식 중 신호가 중단되었습니다. 다시 시도해 주세요.');
+        }
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        onListeningChange?.(false);
       };
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch (e) {
-      console.error(e);
+    } catch {
       setIsListening(false);
+      onListeningChange?.(false);
+      setMicNotice('음성 인식 서비스를 시작할 수 없습니다. 텍스트 입력을 이용해 주세요.');
     }
   };
 
@@ -122,6 +177,40 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
 
   return (
     <div className="flex flex-col h-full w-full bg-slate-950/70 rounded-2xl border border-cyan-900/30 overflow-hidden shadow-2xl backdrop-blur-xl">
+      {/* Subtitle & Audio Protocol HUD Bar */}
+      <div className="px-4 py-2 bg-slate-900/80 border-b border-cyan-950/60 flex items-center justify-between text-[11px] text-slate-400">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-950/90 border border-cyan-500/40 text-cyan-300 font-mono text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+            자막: 한국어 (Korean Subtitles)
+          </span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-950/90 border border-amber-500/40 text-amber-300 font-mono text-[10px]">
+            <Volume2 className="w-3 h-3 text-amber-400" />
+            음성: JARVIS English Vocal
+          </span>
+        </div>
+        <span className="hidden sm:inline font-mono text-[10px] text-slate-500">
+          JARVIS PROTOCOL v2.0
+        </span>
+      </div>
+
+      {/* Mic Permission / Status Notification */}
+      {micNotice && (
+        <div className="flex items-center justify-between gap-2 px-3.5 py-2 bg-amber-950/80 border-b border-amber-500/40 text-amber-200 text-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{micNotice}</span>
+          </div>
+          <button
+            onClick={() => setMicNotice(null)}
+            className="p-1 text-amber-400 hover:text-amber-100 rounded transition"
+            title="닫기"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
         {messages.length === 0 ? (
@@ -137,7 +226,7 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
                 Greetings, I am <span className="bg-gradient-to-r from-amber-300 to-cyan-300 bg-clip-text text-transparent font-extrabold">fly2.0</span>
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Your quantum neural AI assistant. Connected to dynamic neural matrix core. Ask me anything, generate ideas, analyze code, or speak directly to me.
+                JARVIS 프로토콜 기반 양자 신경망 AI 비서입니다. 무엇이든 질문하시거나 코딩, 분석, 일상 업무 지원을 요청하십시오, Sir.
               </p>
             </div>
 
@@ -195,17 +284,27 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
                     )}
                   </div>
 
+                  {/* English Vocal Line Tag for Assistant */}
+                  {!isUser && msg.voiceText && (
+                    <div className="mt-2.5 px-2.5 py-1.5 rounded-lg bg-amber-950/30 border border-amber-500/20 text-[11px] text-amber-300/90 font-mono flex items-center gap-1.5">
+                      <Volume2 className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate italic">
+                        "{msg.voiceText}"
+                      </span>
+                    </div>
+                  )}
+
                   <div className="mt-2 pt-2 border-t border-slate-800/50 flex items-center justify-between text-[10px] text-slate-500 font-mono">
                     <span>{msg.timestamp}</span>
 
                     {!isUser && (
                       <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition">
                         <button
-                          onClick={() => onPlayAudio(msg.content, msg.id)}
+                          onClick={() => onPlayAudio(msg.content, msg.id, msg.voiceText)}
                           className={`p-1 rounded hover:bg-slate-800 transition ${
                             isPlaying ? 'text-amber-400 animate-pulse' : 'text-slate-400 hover:text-cyan-300'
                           }`}
-                          title="Listen with fly2.0 Voice"
+                          title="JARVIS 영어 음성 재생 (Play English Voice)"
                         >
                           <Volume2 className="w-3.5 h-3.5" />
                         </button>
@@ -243,7 +342,7 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
             </div>
             <div className="px-4 py-3 rounded-2xl rounded-tl-none bg-slate-900/90 border border-cyan-900/40 text-xs text-cyan-300 flex items-center gap-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-              <span>fly2.0 is synthesizing quantum response...</span>
+              <span>JARVIS fly2.0 is processing quantum telemetry...</span>
             </div>
           </div>
         )}
@@ -297,3 +396,4 @@ export const Fly2Chat: React.FC<Fly2ChatProps> = ({
     </div>
   );
 };
+
